@@ -207,8 +207,8 @@ int main(int argc, char **argv) {
 
 	// The input arguments should be a file name, and a path to a directory in 
 	// which the file should be saved after the transfer is done
-	// argv[1]: file_name
-	// argv[2]: path
+	// argv[1]: path
+	// argv[2]: file name
 
 	// Check if the user inputted the correct number of arguments
 	if(3 != argc) {
