@@ -8,6 +8,7 @@
 #include <arpa/inet.h> // for inet_addr
 #include <sys/types.h>
 #include <pthread.h>
+#include <stdlib.h>
 #include <fcntl.h> //for open file modes.
 
 //==============================================================================
@@ -329,7 +330,7 @@ void *establish_connection_with_peer(void *vargs){
 	// Close the socket
 	if (-1 == close(sockfd)) {
 		fprintf(stderr, "The client socket could not close properly");
-		return vargs;
+		exit(-1);
 	}
 
 	// Exit the thread
@@ -343,7 +344,12 @@ void *establish_connection_with_peer(void *vargs){
 int create_threads(int peers[]){
 	pthread_t thread_id[5];
     void *ret[5];
-	size_t nb_of_peers= sizeof(peers)/sizeof(peers[0]);
+	int nb_of_peers= 0;
+
+	for(int i=0 ; i<3 ; i++ ){
+        if( peers[i] != 0 )
+            nb_of_peers++;
+    }
 
 	// Create 3 threads for each peer
 	for( int i=0 ; i<nb_of_peers ; i++ ){
