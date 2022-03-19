@@ -8,6 +8,7 @@
 #include <arpa/inet.h> // for inet_addr
 #include <sys/types.h>
 #include <pthread.h>
+#include <fcntl.h> //for open file modes.
 
 //==============================================================================
 //================ Some general info that we can delete later ==================
@@ -59,11 +60,12 @@ void set_addr(struct sockaddr_in *addr, uint32_t inaddr, short sin_port) {
 //----- when_acting_as_a_server is used to facilitate other peers with a list of
 //----- available files and send them to a peer as requested
 void when_acting_as_a_server() {
-	int sockfd, connfd;
+	int sockfd, connfd,size,file_desc;
 	int n_read;
 	struct sockaddr_in local_addr, remote_addr;
 	socklen_t remote_len;
-	char buf[BUF_LEN]; // delete this later maybe
+	char file_name[BUF_LEN+5];
+	char buf[BUF_LEN+5]; // delete this later maybe
 
 	printf("Server is starting...\n"); // delete this later
 	
@@ -99,14 +101,68 @@ void when_acting_as_a_server() {
 	printf("[server] reading\n");
 
 	// read()
-	n_read = read(connfd, buf, BUF_LEN);
+	n_read = read(connfd,&size,4); //reading the file name size
+	if ( n_read < 0 || size > 512 ){
+		fprintf(stderr, "[Server] Something went wrong when reading.\n");
+		return;
+	}
+	n_read = read(connfd, file_name, size); //reading name of wanted file
 
 	if(-1 == n_read) {
 		fprintf(stderr, "[Server] Something went wrong when reading.\n");
 		return;
 	}
 
-	printf("[server] The peer told me to: %s\n", buf);
+	printf("[server] The peer told me to: %s %d\n", file_name,size);
+
+	file_desc = open(file_name,O_RDONLY) ;
+    if ( file_desc == -1 )
+    {
+		fprintf(stderr, "[Server] Something went wrong when opening file.\n");
+		return;
+    }
+
+	//calculating the dimension of the file
+	size = 0 ;
+	while ( (n_read = read(file_desc,buf,BUF_LEN)) > 0 ) 
+	{
+		size = size+n_read;
+	}
+
+	if ( close(file_desc) < 0 )
+	{
+		fprintf(stderr, "[Server] Something went wrong when closing file.\n");
+		return;
+	}
+
+	printf("[Server] size calculated %d \n",size) ;
+	if ( write(connfd,&size,4) < 0 ) //writing size
+	{
+		fprintf(stderr, "[Server] Something went wrong when sending the file size.\n");
+		return;
+	}
+
+	file_desc = open(file_name,O_RDONLY) ;
+    if ( file_desc == -1 )
+    {
+		fprintf(stderr, "[Server] Something went wrong when opening file.\n");
+		return;
+    }
+	//writing the file
+	while ( (n_read = read(file_desc,buf,BUF_LEN)) > 0 )
+	{
+		if ( write(connfd,buf,n_read) < 0 )
+		{
+			fprintf(stderr, "[Server] Something went sending the file.\n");
+			return;
+		}
+	}
+
+	if ( close(file_desc) < 0 )
+	{
+		fprintf(stderr, "[Server] Something went wrong when closing file.\n");
+		return;
+	}
 
 	// write()
 
@@ -120,11 +176,11 @@ void when_acting_as_a_server() {
 
 //----- when_acting_as_a_client is used for the functionality of the local peer
 //----- to transfer requested files from other peers to the user's computer
-void when_acting_as_a_client() {
-	int sockfd;
+void when_acting_as_a_client(char *file_name,uint32_t peer_address) {
+	int sockfd,size,file_desc,n_read;
 	struct sockaddr_in remote_addr; 
-	uint32_t peer_address = 2130706433; // this should be changed to an array of peer addresses
-	char buf[BUF_LEN] = "This is some text that the client sends"; // delete this later maybe
+	peer_address = 2130706433; // this should be changed to an array of peer addresses
+	char buf[BUF_LEN+5] ; // delete this later maybe
 
 	printf("Client is starting...\n"); // delete this later
 
@@ -151,13 +207,53 @@ void when_acting_as_a_client() {
 	printf("[client] writing to server\n");
 
 	// write()
-	if(0 > write(sockfd, buf, BUF_LEN)) {
+	size = strlen(file_name);
+	if(0 > write(sockfd, &size, 4)) {
+		fprintf(stderr, "[Client] Something went wrong when writing.\n");
+		return;
+	}
+
+	if(0 > write(sockfd, file_name, size)) {
 		fprintf(stderr, "[Client] Something went wrong when writing.\n");
 		return;
 	}
 
 	// read()
+	
+	if ( read(sockfd,&size,4) < 0 ) //reading the file dimension
+	{
+		fprintf(stderr, "[Client] Something went wrong when reading file size.\n");
+		return;
+	}
 
+	//creating the file
+	printf("[Client] Printint the size after reading %d\n",size) ;
+	file_desc = open("Pulamea.txt",O_WRONLY | O_CREAT | O_APPEND,S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP ) ;
+    if ( file_desc < 0 )
+    {
+		fprintf(stderr, "[Client] Something went wrong when creating the new file.\n");
+        return ;
+    }
+
+	for ( ; size > 0 ; size -= 1024 )
+	{
+		if ( (n_read = read(sockfd,buf,BUF_LEN)) < 0 )
+		{
+			fprintf(stderr, "[Client] Something went wrong when reading the file.\n");
+			return;
+		}
+		if ( write(file_desc,buf,n_read) < 0 )
+		{
+			fprintf(stderr, "[Client] Something went wrong when writing in the new file.\n");
+			return;
+		}
+	}
+
+	if ( close(file_desc) < 0 )
+    {
+		fprintf(stderr, "[Client] Something went wrong when closing the file.\n");
+        return ;
+    }
 
 	if (-1 == close(sockfd)) {
 		fprintf(stderr, "The client socket could not close properly");
@@ -183,7 +279,7 @@ void start_peer(char *path, char *file_name) {
 		when_acting_as_a_server();
 	} else {
 		sleep(3);
-		when_acting_as_a_client();
+		when_acting_as_a_client(file_name,0);
 	}
 }
 
@@ -228,12 +324,12 @@ void *establish_connection_with_peer(void *vargs){
 	}
 
 	// If connection was successful change the value in the connection vector
-	connection_vector[i++]= peer_address;
+	connection_vector[index++]= peer_address;
 
 	// Close the socket
 	if (-1 == close(sockfd)) {
 		fprintf(stderr, "The client socket could not close properly");
-		return;
+		return vargs;
 	}
 
 	// Exit the thread
@@ -253,7 +349,7 @@ int create_threads(int peers[]){
 	for( int i=0 ; i<nb_of_peers ; i++ ){
 		if( pthread_create(&thread_id[i], NULL, &establish_connection_with_peer, &peers[i]) != 0 ){
 			perror("pthread_create");
-            exit(1);
+            return 1;
 		}
 	}
 
@@ -261,7 +357,7 @@ int create_threads(int peers[]){
     for(int i=0 ; i<nb_of_peers ; i++){
         if(pthread_join(thread_id[i], &ret[i]) != 0){
             perror("pthread_join");
-            exit(2);
+            return 2;
         }
     }
 
