@@ -225,7 +225,7 @@ void *establish_connection_with_peer(void *vargs){
 	// Connect to given peer
 	if ( connect(sockfd, (struct sockaddr *)&remote_addr, sizeof(remote_addr)) == -1) {
 		fprintf(stderr, "Could not connect\n");
-		return vargs;
+		exit(-1);
 	}
 
 	// If connection was successful change the value in the connection vector
