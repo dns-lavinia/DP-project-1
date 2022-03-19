@@ -321,7 +321,7 @@ void *establish_connection_with_peer(void *vargs){
 	// Connect to given peer
 	if ( connect(sockfd, (struct sockaddr *)&remote_addr, sizeof(remote_addr)) == -1) {
 		fprintf(stderr, "Could not connect\n");
-		return vargs;
+		return;
 	}
 
 	// If connection was successful change the value in the connection vector
@@ -330,7 +330,7 @@ void *establish_connection_with_peer(void *vargs){
 	// Close the socket
 	if (-1 == close(sockfd)) {
 		fprintf(stderr, "The client socket could not close properly");
-		exit(-1);
+		return;
 	}
 
 	// Exit the thread
