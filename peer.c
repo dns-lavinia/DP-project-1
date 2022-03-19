@@ -7,6 +7,7 @@
 #include <string.h> // for memset
 #include <arpa/inet.h> // for inet_addr
 #include <sys/types.h>
+#include <pthread.h>
 
 //==============================================================================
 //================ Some general info that we can delete later ==================
@@ -34,6 +35,9 @@
 #define MAX_PEERS 10
 #define PORT 5005
 #define BUF_LEN 1024
+
+// Global variable for peer-to-peer conection
+int connection_vector[5];
 
 
 //----- set_addr is used to initialize a sockaddr_in struct
@@ -199,6 +203,77 @@ int is_valid_path(char *path) {
 
 		return 1;
 	}
+}
+
+//----- Try to connect with a peer
+//
+//----- Successful connection changes the coressponding vector element with the IP
+void *establish_connection_with_peer(void *vargs){
+    static int index= 0;
+	int sockfd;
+	struct sockaddr_in remote_addr; 
+	uint32_t peer_address = *(int*) vargs;
+
+	// TCP/IP protocol
+	// For TCP: SOCK_STREAM socket
+	sockfd = socket(PF_INET, SOCK_STREAM, 0);
+
+	// Set the remote address for the given peer
+	set_addr(&remote_addr, peer_address, PORT);
+
+	// Connect to given peer
+	if ( connect(sockfd, (struct sockaddr *)&remote_addr, sizeof(remote_addr)) == -1) {
+		fprintf(stderr, "Could not connect\n");
+		return vargs;
+	}
+
+	// If connection was successful change the value in the connection vector
+	connection_vector[i++]= peer_address;
+
+	// Close the socket
+	if (-1 == close(sockfd)) {
+		fprintf(stderr, "The client socket could not close properly");
+		return;
+	}
+
+	// Exit the thread
+	pthread_exit(&peer_address);
+}
+
+//----- Create threads for each peer to establish a connection
+//
+//----- Return a peer address with whom the connection was successful
+//----- or a -1 otherwhise
+int create_threads(int peers[]){
+	pthread_t thread_id[5];
+    void *ret[5];
+	size_t nb_of_peers= sizeof(peers)/sizeof(peers[0]);
+
+	// Create 3 threads for each peer
+	for( int i=0 ; i<nb_of_peers ; i++ ){
+		if( pthread_create(&thread_id[i], NULL, &establish_connection_with_peer, &peers[i]) != 0 ){
+			perror("pthread_create");
+            exit(1);
+		}
+	}
+
+	// Wait for the threads to finish execution
+    for(int i=0 ; i<nb_of_peers ; i++){
+        if(pthread_join(thread_id[i], &ret[i]) != 0){
+            perror("pthread_join");
+            exit(2);
+        }
+    }
+
+	for(int i=0 ; i<nb_of_peers ; i++ ){
+		// Search for a peer with whom the connection was successful
+		// and return the peer_ip
+		if( connection_vector[i] != 0 )
+			return connection_vector[i];
+	}
+
+	printf("No peers available at the moment! Try again later!\n");
+	return -1;
 }
 
 int main(int argc, char **argv) {
