@@ -8,6 +8,7 @@
 #include <arpa/inet.h> // for inet_addr
 #include <sys/types.h>
 #include <pthread.h>
+#include <stdlib.h>
 
 //==============================================================================
 //================ Some general info that we can delete later ==================
@@ -228,12 +229,12 @@ void *establish_connection_with_peer(void *vargs){
 	}
 
 	// If connection was successful change the value in the connection vector
-	connection_vector[i++]= peer_address;
+	connection_vector[index++]= peer_address;
 
 	// Close the socket
 	if (-1 == close(sockfd)) {
 		fprintf(stderr, "The client socket could not close properly");
-		return;
+		exit(-1);
 	}
 
 	// Exit the thread
@@ -247,7 +248,12 @@ void *establish_connection_with_peer(void *vargs){
 int create_threads(int peers[]){
 	pthread_t thread_id[5];
     void *ret[5];
-	size_t nb_of_peers= sizeof(peers)/sizeof(peers[0]);
+	int nb_of_peers= 0;
+
+	for(int i=0 ; i<3 ; i++ ){
+        if( peers[i] != 0 )
+            nb_of_peers++;
+    }
 
 	// Create 3 threads for each peer
 	for( int i=0 ; i<nb_of_peers ; i++ ){
