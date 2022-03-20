@@ -35,7 +35,8 @@
 // Change this value later, maybe relate it somehow to the number of threads
 // for a program
 #define MAX_PEERS 10
-#define PORT 5005
+#define SRV_PORT 5005
+#define PEER_PORT 5006
 #define BUF_LEN 1024
 
 // Global variable for peer-to-peer conection
@@ -51,13 +52,11 @@ void when_acting_as_a_server() {
     char file_name[BUF_LEN + 5];
     char buf[BUF_LEN + 5];  // delete this later maybe
 
-    printf("Server is starting...\n");  // delete this later
-
     // TCP/IP protocol
     // For TCP: SOCK_STREAM socket
     sockfd = socket(PF_INET, SOCK_STREAM, 0);
 
-    set_addr(&local_addr, INADDR_ANY, PORT);
+    set_addr(&local_addr, INADDR_ANY, PEER_PORT);
 
     if (-1 == bind(sockfd, (struct sockaddr *)&local_addr, sizeof(local_addr))) {
         fprintf(stderr, "Something went wrong when binding.\n");
@@ -152,10 +151,10 @@ void when_acting_as_a_server() {
 
 //----- when_acting_as_a_client is used for the functionality of the local peer
 //----- to transfer requested files from other peers to the user's computer
-void when_acting_as_a_client(char *file_name, uint32_t peer_address) {
+void when_acting_as_a_client(char *file_name, struct sockaddr_in peer_address) {
     int sockfd, size, file_desc, n_read;
     struct sockaddr_in remote_addr;
-    peer_address = 2130706433;  // this should be changed to an array of peer addresses
+    // peer_address = 2130706433;  // this should be changed to an array of peer addresses
     char buf[BUF_LEN + 5];      // delete this later maybe
 
     printf("Client is starting...\n");  // delete this later
@@ -170,7 +169,7 @@ void when_acting_as_a_client(char *file_name, uint32_t peer_address) {
     // create a new thread (or process) for every peer that is going to be contacted
 
     // Set the remote address for one of the peers
-    set_addr(&remote_addr, peer_address, PORT);
+    set_addr(&remote_addr, peer_address, SRV_PORT);
 
     printf("[client] connecting to server\n");
 
@@ -204,7 +203,7 @@ void when_acting_as_a_client(char *file_name, uint32_t peer_address) {
 
     // creating the file
     printf("[Client] Printint the size after reading %d\n", size);
-    file_desc = open("Pulamea.txt", O_WRONLY | O_CREAT | O_APPEND, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+    file_desc = open(file_name, O_WRONLY | O_CREAT | O_APPEND, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
     if (file_desc < 0) {
         fprintf(stderr, "[Client] Something went wrong when creating the new file.\n");
         return;
@@ -234,24 +233,6 @@ void when_acting_as_a_client(char *file_name, uint32_t peer_address) {
 
 //----- For now I just created two processes to see that the server and client
 //----- work properly. Later this function should just start the peer
-void start_peer(char *path, char *file_name) {
-    pid_t pid;
-
-    printf("%s\n", "Peer is starting...");
-
-    if ((pid = fork()) < 0) {
-        fprintf(stderr, "Error when creating a new process");
-        return;
-    }
-
-    // if parent process
-    if (pid == 0) {
-        when_acting_as_a_server();
-    } else {
-        sleep(3);
-        when_acting_as_a_client(file_name, 0);
-    }
-}
 
 //----- is_valid_path checks if a given path exists in the system
 //
@@ -285,12 +266,12 @@ void *establish_connection_with_peer(void *vargs) {
     sockfd = socket(PF_INET, SOCK_STREAM, 0);
 
     // Set the remote address for the given peer
-    set_addr(&remote_addr, peer_address, PORT);
+    set_addr(&remote_addr, peer_address, SRV_PORT);
 
     // Connect to given peer
     if (connect(sockfd, (struct sockaddr *)&remote_addr, sizeof(remote_addr)) == -1) {
         fprintf(stderr, "Could not connect\n");
-        return;
+        exit(1);
     }
 
     // If connection was successful change the value in the connection vector
@@ -299,11 +280,13 @@ void *establish_connection_with_peer(void *vargs) {
     // Close the socket
     if (-1 == close(sockfd)) {
         fprintf(stderr, "The client socket could not close properly");
-        return;
+        exit(1);
     }
 
     // Exit the thread
     pthread_exit(&peer_address);
+
+    return NULL;
 }
 
 //----- Create threads for each peer to establish a connection
@@ -347,19 +330,65 @@ int create_threads(int peers[]) {
     return -1;
 }
 
+int has_file(char* file) {
+    // char* path = "./files/";
+    int fd = open(file, O_RDONLY);
+
+    if (fd < 0) {
+        return 0;
+    }
+    close(fd);
+    return 1;
+}
+
+void communicate_with_server(int fd) {
+    message_t msg;
+    char *file_name;
+
+        while (1) {
+        if (read(fd, (void *)&msg, sizeof(message_t)) < 0) {
+            fprintf(stderr, "Could not read from the server\n");
+            exit(1);
+        }
+
+        switch (msg.cmd) {
+            case (P2P_FILE_REQUEST):
+                file_name = malloc(sizeof(char) * (msg.body_size + 100));
+                strcpy(file_name, msg.body);
+
+                printf("[CLIENT] File requested: %s\n", file_name);
+
+                if (has_file(file_name)) {
+                    printf("[CLIENT] File found\n");
+                    msg.cmd = P2P_FILE_FOUND;
+                    if (write(fd, (void *)&msg, sizeof(message_t)) < 0) {
+                        fprintf(stderr, "Could not write to the server\n");
+                        exit(1);
+                    }
+                } else {
+                    printf("[CLIENT] File not found\n");
+                    msg.cmd = P2P_FILE_NOT_FOUND;
+                    if (write(fd, (void *)&msg, sizeof(message_t)) < 0) {
+                        fprintf(stderr, "Could not write to the server\n");
+                        exit(1);
+                    }
+                }
+                break;
+            default:
+                fprintf(stderr, "Unknown command\n");
+                exit(1);
+        }
+    }
+}
+
 int main(int argc, char **argv) {
     // Write the CLI logic here
     // There can be other input arguments so just add them as needed
 
-	// Input the file name
-	char file_name[100];
-	printf("Please input the name of the file you want: ");
-	scanf("%s\n", file_name);
-
 	// Connect to server
 	int sockfd, connfd;
     uint32_t peer_address = 2130706433;
-    struct sockaddr_in client_addr = set_socket_addr(peer_address, PORT);
+    struct sockaddr_in client_addr = set_socket_addr(peer_address, SRV_PORT);
 
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
 
@@ -370,18 +399,36 @@ int main(int argc, char **argv) {
 
 	pid_t pid;
 
+    // // act as seeder to a peer
+    // if ((pid = fork()) < 0) {
+    //     fprintf(stderr, "Error when creating a new process");
+    //     return 0;
+    // }
+
+    // if (pid == 0) {
+    //     printf("[CLIENT] Connected to the p2p system\n");
+    //     when_acting_as_a_server();
+    //     exit(0);
+    // }
+
+    // act as client to the server
     if ((pid = fork()) < 0) {
         fprintf(stderr, "Error when creating a new process");
-        return;
+        return 0;
     }
 
-    // if parent process
     if (pid == 0) {
-        when_acting_as_a_server();
-		exit(0);
+        printf("[CLIENT] Connected to the server\n");
+        communicate_with_server(sockfd);
+        exit(0);
     }
 
-	message_t msg;
+    // Input the file name
+    char file_name[100];
+    printf("Please input the name of the file you want: ");
+    scanf("%s", file_name);
+
+    message_t msg;
     msg.cmd = P2P_FILE_REQUEST;
     msg.body_size = strlen(file_name);
     strcpy(msg.body, file_name);
@@ -396,18 +443,24 @@ int main(int argc, char **argv) {
         exit(1);
     }
 
-    printf("%d\n", msg.cmd);
-    printf("%s\n", msg.body);
+    struct sockaddr_in *addr;
+    switch ( msg.cmd ) {
+        case P2P_ERR_NO_PEERS:
+            printf("No peers available at the moment! Try again later!\n");
+            break;
+        case P2P_PEER_LIST:
+            addr = (struct sockaddr_in *)malloc(sizeof(struct sockaddr_in));
+            memcpy(addr, msg.body, sizeof(struct sockaddr_in));
+            printf("[CLIENT] Peer address: %s:%d\n", inet_ntoa(addr->sin_addr), ntohs(addr->sin_port));
 
-	int connection_peer;
-	int peers[4];
-	memcpy(peers, msg.body, strlen(msg.body));
+            when_acting_as_a_client(file_name, *addr);
 
-	connection_peer= create_threads(peers);
+            break;
+    }
 
-    when_acting_as_a_client(file_name, connection_peer);
+    close(sockfd);
 
-	close(sockfd);
+    while (1) {}
 
     return 0;
 }

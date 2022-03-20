@@ -10,6 +10,7 @@
 #include <sys/types.h>
 #include <pthread.h>
 #include <semaphore.h>
+#include <semaphore.h>
 #include "message.h"
 #include "netio.h"
 
@@ -30,8 +31,13 @@ typedef struct {
 
 thread_data_t thread_data;
 
-int *find_seeders_for_file(char *file_name) {
-    int *seeders = malloc(sizeof(int) * MAX_CLIENTS);
+typedef struct {
+    int seeder_no;
+    struct sockaddr_in *seeder_addrs;
+} seeder_t;
+
+seeder_t find_seeders_for_file(char *file_name, int client_fd) {
+    struct sockaddr_in *seeders = malloc(sizeof(struct sockaddr_in) * MAX_CLIENTS);
     int no_seeders = 0;
 
     printf("[SERVER] looking for seeders...\n");
@@ -39,6 +45,10 @@ int *find_seeders_for_file(char *file_name) {
     message_t *req_msg = create_message(P2P_FILE_REQUEST, file_name);
     message_t *res_msg = (message_t *) malloc(sizeof(message_t));
     for (int i = 0; i < thread_data.connected_clients; i++) {
+        if ( client_fd == thread_data.connection_fds[i] ) {
+            continue;
+        }
+
         printf("[SERVER] sending request to %d\n", thread_data.connection_fds[i]);
 
         // send file request to client
@@ -54,14 +64,19 @@ int *find_seeders_for_file(char *file_name) {
 
         if (res_msg->cmd == P2P_FILE_FOUND) {
             printf("[SERVER] %d - found file\n", thread_data.connection_fds[i]);
-            seeders[no_seeders] = thread_data.connection_fds[i];
+
+            seeders[no_seeders] = thread_data.connection_addrs[i];
             no_seeders++;
         } else if (res_msg->cmd == P2P_FILE_NOT_FOUND) {
             printf("[SERVER] %d - no file found\n", thread_data.connection_fds[i]);
         }
     }
 
-    return seeders;
+    seeder_t seeder_list;
+    seeder_list.seeder_no = no_seeders;
+    seeder_list.seeder_addrs = seeders;
+
+    return seeder_list;
 }
 
 void push_client(int fd, struct sockaddr_in client_addr) {
@@ -99,15 +114,15 @@ void* server_process(void* arg) {
         switch (msg.cmd) {
             case P2P_FILE_REQUEST:
                 printf("[SERVER] file request: %s\n", msg.body);
-                int *seeders = find_seeders_for_file(msg.body);
+                seeder_t seeders = find_seeders_for_file(msg.body, fd);
 
-                if (seeders == NULL) {
+                if (seeders.seeder_no == 0) {
                     msg.cmd = P2P_ERR_NO_PEERS;
                     msg.body_size = 0;
                 } else {
                     msg.cmd = P2P_PEER_LIST;
-                    msg.body_size = sizeof(int) * MAX_CLIENTS;
-                    memcpy(msg.body, seeders, msg.body_size);
+                    msg.body_size = sizeof(struct sockaddr_in);
+                    memcpy(msg.body, seeders.seeder_addrs, sizeof(struct sockaddr_in));
                 }
 
                 if (write(fd, (void *) &msg, sizeof(msg)) < 0) {
@@ -117,7 +132,6 @@ void* server_process(void* arg) {
                 break;
             
             case P2P_BYE:
-                printf("[SERVER] client disconnected: %d\n", fd);
                 run = 0;
                 break;
 

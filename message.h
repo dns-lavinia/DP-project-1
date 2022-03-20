@@ -16,4 +16,6 @@ typedef struct {
 
 message_t *create_message(int cmd, char *body);
 
+void print_message(int code);
+
 #endif
