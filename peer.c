@@ -10,6 +10,8 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>  // for close
+#include "netio.h"
+#include "message.h"
 
 //==============================================================================
 //================ Some general info that we can delete later ==================
@@ -38,21 +40,6 @@
 
 // Global variable for peer-to-peer conection
 int connection_vector[5];
-
-//----- set_addr is used to initialize a sockaddr_in struct
-//
-//----- Parameters
-//----- 	addr: sockaddr_in struct to be initialized
-//-----		inaddr: IP address
-void set_addr(struct sockaddr_in *addr, uint32_t inaddr, short sin_port) {
-    memset((void *)addr, 0, sizeof(*addr));
-
-    // Set the family to be the IPv4 internet protocols
-    addr->sin_family = AF_INET;
-
-    addr->sin_addr.s_addr = htonl(inaddr);
-    addr->sin_port = htons(sin_port);
-}
 
 //----- when_acting_as_a_server is used to facilitate other peers with a list of
 //----- available files and send them to a peer as requested
@@ -364,25 +351,63 @@ int main(int argc, char **argv) {
     // Write the CLI logic here
     // There can be other input arguments so just add them as needed
 
-    // The input arguments should be a file name, and a path to a directory in
-    // which the file should be saved after the transfer is done
-    // argv[1]: path
-    // argv[2]: file name
+	// Input the file name
+	char file_name[100];
+	printf("Please input the name of the file you want: ");
+	scanf("%s\n", file_name);
 
-    // Check if the user inputted the correct number of arguments
-    if (3 != argc) {
-        printf("Incorrect number of arguments given\n");
-        printf("Usage: ./prog path_to_directory file_name\n");
-        return -1;
+	// Connect to server
+	int sockfd, connfd;
+    uint32_t peer_address = 2130706433;
+    struct sockaddr_in client_addr = set_socket_addr(peer_address, PORT);
+
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+
+    if ((connfd = connect(sockfd, (struct sockaddr *) &client_addr, sizeof(client_addr))) < 0) {
+        perror("CONNECT ERROR");
+        exit(1);
     }
 
-    // Check if the path given by the user is a valid one
-    if (!(is_valid_path(argv[1]))) {
-        printf("The given directory is not valid\n");
-        return -1;
+	pid_t pid;
+
+    if ((pid = fork()) < 0) {
+        fprintf(stderr, "Error when creating a new process");
+        return;
     }
 
-    start_peer(argv[1], argv[2]);
+    // if parent process
+    if (pid == 0) {
+        when_acting_as_a_server();
+		exit(0);
+    }
+
+	message_t msg;
+    msg.cmd = P2P_FILE_REQUEST;
+    msg.body_size = strlen(file_name);
+    strcpy(msg.body, file_name);
+    if (write(sockfd, (void *) &msg, sizeof(msg)) < 0) {
+        perror("WRITE ERROR");
+        exit(1);
+    }
+
+    // waiting for request for file 'test'
+    if (read(sockfd, (void *) &msg, sizeof(msg)) < 0) {
+        perror("READ ERROR");
+        exit(1);
+    }
+
+    printf("%d\n", msg.cmd);
+    printf("%s\n", msg.body);
+
+	int connection_peer;
+	int peers[4];
+	memcpy(peers, msg.body, strlen(msg.body));
+
+	connection_peer= create_threads(peers);
+
+    when_acting_as_a_client(file_name, connection_peer);
+
+	close(sockfd);
 
     return 0;
 }

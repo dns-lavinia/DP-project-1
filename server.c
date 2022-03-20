@@ -10,42 +10,12 @@
 #include <sys/types.h>
 #include <pthread.h>
 #include <semaphore.h>
+#include "message.h"
+#include "netio.h"
 
 #define BUFFER_SIZE 1024
 #define MAX_CLIENTS 10
 #define PORT 5005
-
-#define P2P_BYE 0
-#define P2P_FILE_REQUEST 1
-#define P2P_PEER_LIST 2
-#define P2P_FILE_FOUND 3
-#define P2P_FILE_NOT_FOUND 4
-#define P2P_ERR_NO_PEERS 10
-
-typedef struct {
-    int cmd;
-    int body_size;
-    char body[1024];
-} message_t;
-
-message_t *create_message(int cmd, char *body) {
-    message_t *msg = (message_t *) malloc(sizeof(message_t));
-    msg->cmd = cmd;
-    msg->body_size = strlen(body);
-    strcpy(msg->body, body);
-    return msg;
-}
-
-struct sockaddr_in set_socket_addr(uint32_t inaddr, short sin_port) {
-    struct sockaddr_in addr;
-    memset((void*) &addr, 0, sizeof(addr));
-
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(inaddr);
-    addr.sin_port = htons(sin_port);
-
-    return addr;
-}
 
 typedef struct {
     int sockfd;
