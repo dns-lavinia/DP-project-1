@@ -98,7 +98,11 @@ void when_acting_as_a_server() {
     printf("[server] The peer told me to: %s %d\n", file_name, size);
 
     file_desc = open(file_name, O_RDONLY);
+    int errnum;
     if (file_desc == -1) {
+        errnum= errno;
+        fprintf(stderr, "Value of errno: %d\n", errno);
+        fprintf(stderr, "Error opening file: %s\n", strerror( errnum ));
         fprintf(stderr, "[Server] Something went wrong when opening file.\n");
         return;
     }
@@ -157,6 +161,9 @@ void when_acting_as_a_client(char *file_name, struct sockaddr_in peer_address) {
     // peer_address = 2130706433;  // this should be changed to an array of peer addresses
     char buf[BUF_LEN + 5];      // delete this later maybe
 
+    printf("addr: %d\n", peer_address.sin_addr.s_addr);
+    printf("port: %d\n", peer_address.sin_port);
+
     printf("Client is starting...\n");  // delete this later
 
     // TCP/IP protocol
@@ -169,7 +176,7 @@ void when_acting_as_a_client(char *file_name, struct sockaddr_in peer_address) {
     // create a new thread (or process) for every peer that is going to be contacted
 
     // Set the remote address for one of the peers
-    set_addr(&remote_addr, peer_address, SRV_PORT);
+    set_addr(&remote_addr, peer_address.sin_addr.s_addr, peer_address.sin_port);
 
     printf("[client] connecting to server\n");
 
@@ -373,6 +380,8 @@ void communicate_with_server(int fd) {
                         exit(1);
                     }
                 }
+                
+                free(file_name);
                 break;
             default:
                 fprintf(stderr, "Unknown command\n");
@@ -407,7 +416,7 @@ int main(int argc, char **argv) {
 
     // if (pid == 0) {
     //     printf("[CLIENT] Connected to the p2p system\n");
-    //     when_acting_as_a_server();
+        // when_acting_as_a_server();
     //     exit(0);
     // }
 
@@ -432,6 +441,7 @@ int main(int argc, char **argv) {
     msg.cmd = P2P_FILE_REQUEST;
     msg.body_size = strlen(file_name);
     strcpy(msg.body, file_name);
+
     if (write(sockfd, (void *) &msg, sizeof(msg)) < 0) {
         perror("WRITE ERROR");
         exit(1);
@@ -444,6 +454,7 @@ int main(int argc, char **argv) {
     }
 
     struct sockaddr_in *addr;
+    
     switch ( msg.cmd ) {
         case P2P_ERR_NO_PEERS:
             printf("No peers available at the moment! Try again later!\n");
@@ -458,6 +469,8 @@ int main(int argc, char **argv) {
             break;
     }
 
+    free(addr);
+    printf("[PEER] Disconnected!\n");
     close(sockfd);
 
     while (1) {}

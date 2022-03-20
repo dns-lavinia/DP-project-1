@@ -76,6 +76,9 @@ seeder_t find_seeders_for_file(char *file_name, int client_fd) {
     seeder_list.seeder_no = no_seeders;
     seeder_list.seeder_addrs = seeders;
 
+    free(seeders);
+    free(res_msg);
+
     return seeder_list;
 }
 
@@ -134,7 +137,8 @@ void* server_process(void* arg) {
             case P2P_BYE:
                 run = 0;
                 break;
-
+                
+        free(buffer);
         }
     } while (run);
 
