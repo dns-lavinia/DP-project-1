@@ -8,7 +8,15 @@
 #include <string.h> // for memset
 #include <arpa/inet.h> // for inet_addr
 #include <sys/types.h>
+
 #define PORT 5005
+
+#define P2P_BYE 0
+#define P2P_FILE_REQUEST 1
+#define P2P_PEER_LIST 2
+#define P2P_FILE_FOUND 3
+#define P2P_FILE_NOT_FOUND 4
+#define P2P_ERR_NO_PEERS 10
 
 struct sockaddr_in set_socket_addr(uint32_t inaddr, short sin_port) {
     struct sockaddr_in addr;
@@ -20,6 +28,12 @@ struct sockaddr_in set_socket_addr(uint32_t inaddr, short sin_port) {
 
     return addr;
 }
+
+typedef struct {
+    int cmd;
+    int body_size;
+    char body[100];
+} message_t;
 
 int main() {
     int sockfd, connfd;
@@ -33,10 +47,32 @@ int main() {
         exit(1);
     }
 
-    if (write(sockfd, "Hello", 5) < 0) {
+    message_t msg;
+    msg.cmd = P2P_FILE_REQUEST;
+    msg.body_size = 4;
+    strcpy(msg.body, "test");
+    if (write(sockfd, (void *) &msg, sizeof(msg)) < 0) {
         perror("WRITE ERROR");
         exit(1);
     }
+
+    // waiting for request for file 'test'
+    if (read(sockfd, (void *) &msg, sizeof(msg)) < 0) {
+        perror("READ ERROR");
+        exit(1);
+    }
+
+    printf("%d\n", msg.cmd);
+    printf("%s\n", msg.body);
+
+    // response to request for file 'test'
+    msg.cmd = P2P_FILE_FOUND;
+    if (write(sockfd, (void *) &msg, sizeof(msg)) < 0) {
+        perror("WRITE ERROR");
+        exit(1);
+    }
+
+    while (1) {}
 
     close(sockfd);
 }
