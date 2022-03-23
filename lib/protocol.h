@@ -12,6 +12,7 @@
 #define P2P_FILE_NOT_FOUND 4
 #define P2P_ERR_NO_PEERS 5
 #define P2P_FILE_DATA 6
+#define P2P_SEGMENT_REQUEST 7
 
 typedef struct {
     int code;

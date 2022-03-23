@@ -24,7 +24,7 @@ void set_addr(struct sockaddr_in *addr, uint32_t inaddr, short sin_port);
 
 char* print_sockaddr(struct sockaddr_in addr);
 
-int stream_read(int fd, void* buf, size_t count);
+int stream_read(int fd, void* buf, size_t count, off_t offset);
 
 int stream_write(int fd, void* buf, size_t count);
 

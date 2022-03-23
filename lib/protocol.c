@@ -18,7 +18,8 @@ char *message_code[] = {
     "P2P_FILE_FOUND",
     "P2P_FILE_NOT_FOUND",
     "P2P_ERR_NO_PEERS",
-    "P2P_FILE_DATA"
+    "P2P_FILE_DATA",
+    "P2P_SEGMENT_REQUEST"
 };
 
 void print_message(message_t msg) {

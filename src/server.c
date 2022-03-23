@@ -126,7 +126,7 @@ void* communicate_with_client(void* arg) {
                     msg = create_message(P2P_ERR_NO_PEERS, NULL, 0);
                 } else {
                     printf("[SERVER] found %d seeders\n", seeders.num_ports);
-                    msg = create_message(P2P_PEER_LIST, seeders.ports, sizeof(int));
+                    msg = create_message(P2P_PEER_LIST, seeders.ports, seeders.num_ports * sizeof(int));
                 }
 
                 if (write(fd, &msg, sizeof(msg)) < 0) {

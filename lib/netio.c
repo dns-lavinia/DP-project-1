@@ -27,12 +27,12 @@ char* print_sockaddr(struct sockaddr_in addr) {
     return str;
 }
 
-int stream_read(int fd, void* buf, size_t len) {
+int stream_read(int fd, void* buf, size_t len, off_t offset) {
     int bytes_read = 0;
     int bytes_left = len;
 
     while (bytes_left > 0) {
-        if ((bytes_read = read(fd, buf + bytes_read, bytes_left)) < 0) {
+        if ((bytes_read = pread(fd, buf + bytes_read, bytes_left, offset)) < 0) {
             return -1;
         } 
         if (bytes_read == 0) {

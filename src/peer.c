@@ -10,6 +10,7 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>  // for close
+#include <sys/stat.h> // for fstat
 
 #include "../lib/netio.h"
 #include "../lib/protocol.h"
@@ -50,7 +51,7 @@ thread_data_t thread_data;
 
 //----- act_as_seeder is used to facilitate other peers with a list of
 //----- available files and send them to a peer as requested
-void send_file(int leecher_fd, char *file_name) {
+void send_file(int leecher_fd, char *file_name, int total_seg, int current_seg) {
     char *file_path = malloc(strlen(file_name) + strlen("./res/") + 1);
     int fd;
 
@@ -62,18 +63,47 @@ void send_file(int leecher_fd, char *file_name) {
         exit(1);
     }
 
+    
+    struct stat st;
+    fstat(fd, &st);
+
+    // total bytes to read
+    int total_to_read = st.st_size;
+    int seg_size = total_to_read / total_seg; // size of one segment to send
+    int n_read = seg_size;
+    int offset = current_seg * seg_size;
+
+    // if the size of the file is smaller than BUF_LEN - 20, then change n_read
+    if (n_read > (BUF_LEN - 20)) {
+        n_read = BUF_LEN - 20;
+    }
+
     char buffer[BUF_LEN - 20];
     int bytes_read;
     message_t msg;
-    while ((bytes_read = stream_read(fd, buffer, BUF_LEN - 20)) > 0) {
+    while ((bytes_read = stream_read(fd, buffer, n_read, offset)) > 0) {
         msg = create_message(P2P_FILE_DATA, buffer, bytes_read);
         write(leecher_fd, &msg, sizeof(msg));
+
+
+        // keep track and update how much of the segment was read
+        seg_size -= n_read;
+
+        if(n_read > seg_size) {
+            n_read = seg_size;
+        }
+
+        offset += bytes_read;
+
+        if(offset == ((current_seg * seg_size) + 1)) {
+            break;
+        }
     }
 
     close(fd);
 }
 
-void receive_file(int leecher_fd, char *file_name) {
+void receive_file(int leecher_fd, char *file_name, int n_seeders) {
     char *file_path = malloc(strlen(file_name) + strlen("./files/") + 1);
     int fd;
 
@@ -89,6 +119,7 @@ void receive_file(int leecher_fd, char *file_name) {
 
     while (read(leecher_fd, &msg, sizeof(msg)) > 0) {
         print_message(msg);
+
         if (msg.code == P2P_FILE_DATA) {
             stream_write(fd, msg.body, msg.body_size);
         } else {
@@ -104,6 +135,7 @@ void receive_file(int leecher_fd, char *file_name) {
 
 void *transfer_file(void *arg) {
     int fd = *(int *)arg;
+    char *file_name = NULL;
 
     message_t msg;
     int run = 1;
@@ -120,15 +152,35 @@ void *transfer_file(void *arg) {
         switch (msg.code) {
             case P2P_FILE_REQUEST:
                 printf("[SEEDER] sending file: %s\n", msg.body);
-                send_file(fd, msg.body);
+
+                file_name = (char*)malloc(msg.body_size);
+                memcpy(file_name, msg.body, msg.body_size);
                 break;
 
+            case P2P_SEGMENT_REQUEST:
+                if(NULL == file_name) {
+                    fprintf(stderr, "[SEEDER] File name not specified for segment transfer.\n");
+                    exit(1);
+                }
+
+                printf("[SEEDER] sending requested segment: %d\n", *((int *)msg.body + 1));
+
+                int total_seg = *((int *)msg.body);
+                int current_seg = *((int *)msg.body + 1);
+
+                send_file(fd, file_name, total_seg, current_seg);
+                break;
             case P2P_BYE:
                 run = 0;
                 break;
+
+            default:
+                fprintf(stderr, "Unknown command\n");
+                exit(1);
         }
     } while (run);
 
+    free(file_name);
     close(fd);
 
     printf("[SEEDER] connection closed\n");
@@ -204,42 +256,60 @@ void *act_as_seeder(void *args) {
 
 //----- act_as_leecher is used for the functionality of the local peer
 //----- to transfer requested files from other peers to the user's computer
-void act_as_leecher(char *file_name, int seeder_port) {
+void act_as_leecher(char *file_name, int *seeder_ports, int total_seeders) {
     int leecher_fd;
-    struct sockaddr_in leecher_addr = {
+
+    for(int i = 0; i < total_seeders; i++) {
+        struct sockaddr_in leecher_addr = {
         .sin_family = AF_INET,
-        .sin_port = htons(seeder_port),
+        .sin_port = htons(seeder_ports[i]),
         .sin_addr.s_addr = inet_addr("127.0.0.1")};
 
-    if ((leecher_fd = socket(PF_INET, SOCK_STREAM, 0)) < 0) {
-        perror("SOCKET ERROR");
-        exit(1);
+        if ((leecher_fd = socket(PF_INET, SOCK_STREAM, 0)) < 0) {
+            perror("SOCKET ERROR");
+            exit(1);
+        }
+
+        if (connect(leecher_fd, (struct sockaddr *)&leecher_addr, sizeof(leecher_addr)) < 0) {
+            perror("CONNECT ERROR");
+            exit(1);
+        }
+
+        printf("[LEECHER] connected to seeder: %s\n", print_sockaddr(leecher_addr));
+
+        // send the name of the file you request as leecher
+        message_t req_msg = create_message(P2P_FILE_REQUEST, file_name, strlen(file_name) + 1);
+        if (write(leecher_fd, &req_msg, sizeof(message_t)) < 0) {
+            perror("WRITE ERROR");
+            exit(1);
+        }
+
+        // send the total number of segments and segment
+        int seg_req[] = {total_seeders, i};
+
+        // tell the seeder what segment you want as a leecher
+        message_t req_seg_msg = create_message(P2P_SEGMENT_REQUEST, seg_req, 8);
+        if (write(leecher_fd, &req_seg_msg, sizeof(message_t)) < 0) {
+            perror("WRITE ERROR");
+            exit(1);
+        }
+        
+
+        printf("[LEECHER] downloading file: %s\n", file_name);
+        receive_file(leecher_fd, file_name, total_seeders);
+        printf("[LEECHER] file download complete\n");
+
+        message_t bye_msg = create_message(P2P_BYE, NULL, 0);
+        if (write(leecher_fd, &bye_msg, sizeof(message_t)) < 0) {
+            perror("WRITE ERROR");
+            exit(1);
+        }
+
+        close(leecher_fd);
+
+        // for now test just for one peer
+        break;
     }
-
-    if (connect(leecher_fd, (struct sockaddr *)&leecher_addr, sizeof(leecher_addr)) < 0) {
-        perror("CONNECT ERROR");
-        exit(1);
-    }
-
-    printf("[LEECHER] connected to seeder: %s\n", print_sockaddr(leecher_addr));
-
-    message_t req_msg = create_message(P2P_FILE_REQUEST, file_name, sizeof(file_name) + 1);
-    if (write(leecher_fd, &req_msg, sizeof(message_t)) < 0) {
-        perror("WRITE ERROR");
-        exit(1);
-    }
-
-    printf("[LEECHER] downloading file: %s\n", file_name);
-    receive_file(leecher_fd, file_name);
-    printf("[LEECHER] file download complete\n");
-
-    message_t bye_msg = create_message(P2P_BYE, NULL, 0);
-    if (write(leecher_fd, &bye_msg, sizeof(message_t)) < 0) {
-        perror("WRITE ERROR");
-        exit(1);
-    }
-
-    close(leecher_fd);
 }
 
 //----- is_valid_path checks if a given path exists in the system
@@ -324,10 +394,17 @@ void *act_as_client(void *arg) {
                 break;
 
             case P2P_PEER_LIST:
-                printf("[CLIENT] Peer list received: %d\n", *(int *)res_msg.body);
-                int seeder_port = *(int *)res_msg.body;
+                int seeder_number = res_msg.body_size / sizeof(int);
+                printf("[CLIENT] Peer list received: \n");
 
-                act_as_leecher(file_name, seeder_port);
+                // print the ports of the peers that have the requested file
+                for(int i = 0; i < seeder_number; i++) {
+                    printf("\t[%d] - %d\n", i, *((int*)res_msg.body + i));
+                }
+
+
+                int* seeder_ports = (int*)res_msg.body;
+                act_as_leecher(file_name, seeder_ports, seeder_number);
 
                 break;
 
