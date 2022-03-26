@@ -104,7 +104,7 @@ void send_file(int leecher_fd, char *file_name, int total_seg, int current_seg) 
 }
 
 void receive_file(int leecher_fd, char *file_name, int n_seeders, int current_seg) {
-    char *file_path = malloc(strlen(file_name) + strlen("./files/") + strlen("temp"));
+    char *file_path = malloc(strlen("./files/") + strlen("temp") + 3);
     char str_seg[2];
     int fd;
 
@@ -113,9 +113,6 @@ void receive_file(int leecher_fd, char *file_name, int n_seeders, int current_se
     strcpy(file_path, "./files/");
     strcat(file_path, "temp");
     strcat(file_path, str_seg);
-
-    printf("Temp file is: %s\n", file_path);
-    return;
 
     if ((fd = open(file_path, O_WRONLY | O_CREAT | O_TRUNC, 0644)) < 0) {
         perror("OPEN ERROR");
@@ -326,10 +323,15 @@ void* connect_to_seeder(void *arg) {
 //----- to transfer requested files from other peers to the user's computer
 void act_as_leecher(char *file_name, int *seeder_ports, int total_seeders) {
     pthread_t thread_id[10];
+    thread_seeder_args args[total_seeders];
+    char *file_path = malloc(strlen(file_name) + strlen("./files/") + 1);
+    char str_seg[2], buf[BUF_LEN];
+    size_t n_bytes = 0;
+    int fd, fd_temp; 
 
     for(int i = 0; i < total_seeders; i++) {
         // int port, char *file_name, int total_seeders, int current_seg
-        thread_seeder_args args = {
+        args[i] = (thread_seeder_args) {
             .port = seeder_ports[i],
             .file_name = file_name,
             .total_seeders = total_seeders,
@@ -337,7 +339,7 @@ void act_as_leecher(char *file_name, int *seeder_ports, int total_seeders) {
         };
 
         // create a new thread for every peer that has the file
-        if (pthread_create(&thread_id[i], NULL, connect_to_seeder, (void*) &args) != 0) {
+        if (pthread_create(&thread_id[i], NULL, connect_to_seeder, (void*) &args[i]) != 0) {
             perror("THREAD CREATION ERROR");
             exit(1);
         }
@@ -349,6 +351,58 @@ void act_as_leecher(char *file_name, int *seeder_ports, int total_seeders) {
             perror("THREAD JOIN ERROR");
             exit(1);
         }
+    }
+
+    
+    // create the file path on leecher's machine
+    strcpy(file_path, "./files/");
+    strcat(file_path, file_name);
+
+    // create and open the final file
+    if ((fd = open(file_path, O_WRONLY | O_CREAT | O_TRUNC, 0644)) < 0) {
+        perror("OPEN ERROR");
+        exit(1);
+    }
+
+    // recompose the file
+    for(int i = 0; i < total_seeders; i++) {
+        // read temp_i file
+        snprintf(str_seg, 2, "%d", i);
+        char *temp_path = malloc(strlen("./files/") + strlen("temp") + 3); 
+
+        strcat(temp_path, "./files/temp");
+        strcat(temp_path, str_seg);
+
+        if ((fd_temp = open(temp_path, O_RDONLY)) < 0) {
+            perror("OPEN ERROR");
+            exit(1);
+        }
+
+        // read from temp file and write to final file
+        while((n_bytes = read(fd_temp, buf, BUF_LEN)) > 0) {
+            // write to final file
+            if(write(fd, buf, n_bytes) < 0) {
+                fprintf(stderr, "Could not write to file.\n");
+                exit(1);
+            }
+        }
+
+        if(n_bytes < 0) {
+            perror("Something went wrong when reading\n");
+            exit(1);
+        }
+
+
+        if(close(fd_temp) < 0) {
+            fprintf(stderr, "Something went wrong when closing the file.\n");
+            exit(1);
+        }
+    }
+
+    if(close(fd) < 0) {
+
+        fprintf(stderr, "Something went wrong when closing the file.\n");
+        exit(1);
     }
 }
 
@@ -381,7 +435,11 @@ int has_file(char *file) {
         return 0;
     }
 
-    close(fd);
+    if(close(fd) < 0) {
+        fprintf(stderr, "Could not close %s correctly\n", file_path);
+        exit(1);
+    }
+
     return 1;
 }
 
