@@ -13,10 +13,11 @@
 
 #include "../lib/netio.h"
 #include "../lib/protocol.h"
+#include "../lib/logger.h"
 
 #define BUFFER_SIZE 1024
 #define MAX_CLIENTS 10
-#define PORT 5005
+#define PORT 5006
 
 typedef struct {
     int connected_clients;
@@ -35,7 +36,7 @@ seeder_t find_seeders_for_file(char *file_name, int client_fd) {
     int seeder_ports[MAX_CLIENTS];
     int num_ports = 0;
 
-    printf("[SERVER] looking for seeders...\n");
+    logger(LOG_SERVER, "looking for seeders...");
 
     message_t req_msg = create_message(P2P_FILE_REQUEST, file_name, strlen(file_name) + 1);
     message_t res_msg;
@@ -45,7 +46,7 @@ seeder_t find_seeders_for_file(char *file_name, int client_fd) {
             continue;
         }
 
-        printf("[SERVER] sending request to %d\n", thread_data.connection_fds[i]);
+        logger(LOG_SERVER, "sending request to %d", thread_data.connection_fds[i]);
 
         // send file request to client
         if (write(thread_data.connection_fds[i], &req_msg, sizeof(message_t)) < 0) {
@@ -58,15 +59,15 @@ seeder_t find_seeders_for_file(char *file_name, int client_fd) {
             exit(1);
         }
 
-        print_message(res_msg);
+        logger(LOG_PROTOCOL, msg_to_string(res_msg));
 
         if (res_msg.code == P2P_FILE_FOUND) {
-            printf("[SERVER] %d - found file - port: %d\n", thread_data.connection_fds[i], *(int *)res_msg.body);
+            logger(LOG_SERVER, "%d - found file - port: %d", thread_data.connection_fds[i], *(int *)res_msg.body);
 
             seeder_ports[num_ports] = *(int *)res_msg.body;
             num_ports++;
         } else if (res_msg.code == P2P_FILE_NOT_FOUND) {
-            printf("[SERVER] %d - no file found\n", thread_data.connection_fds[i]);
+            logger(LOG_SERVER, "%d - no file found", thread_data.connection_fds[i]);
         }
     }
 
@@ -83,20 +84,20 @@ void push_client(int fd, struct sockaddr_in client_sockaddr) {
     thread_data.connection_addrs[thread_data.connected_clients] = client_sockaddr;
     thread_data.connected_clients++;
 
-    printf("[SERVER] client connected: %d (%d / %d)\n", fd, thread_data.connected_clients, MAX_CLIENTS);
+    logger(LOG_SERVER, "client connected: %d (%d / %d)", fd, thread_data.connected_clients, MAX_CLIENTS);
 }
 
 void pop_client(int fd) {
     thread_data.connected_clients--;
-    printf("[SERVER] client disconnected: %d (%d / %d)\n", fd, thread_data.connected_clients, MAX_CLIENTS);
+    logger(LOG_SERVER, "client disconnected: %d (%d / %d)", fd, thread_data.connected_clients, MAX_CLIENTS);
 }
 
-//* function: communicate_with_client
 typedef struct {
     int client_fd;
     struct sockaddr_in client_sockaddr;
 } thread_proc_args_t;
 
+//* function: communicate_with_client
 void* communicate_with_client(void* arg) {
     thread_proc_args_t* args = (thread_proc_args_t*) arg;
     int fd = args->client_fd;
@@ -113,19 +114,19 @@ void* communicate_with_client(void* arg) {
             exit(1);
         }
 
-        print_message(msg);
+        logger(LOG_PROTOCOL, msg_to_string(msg));
 
         // Process message
         switch (msg.code) {
             case P2P_FILE_REQUEST:
-                printf("[SERVER] file request: %s\n", msg.body);
+                logger(LOG_SERVER, "file request: %s", msg.body);
                 seeder_t seeders = find_seeders_for_file(msg.body, fd);
 
                 if (seeders.num_ports == 0) {
-                    printf("[SERVER] no seeders found\n");
+                    logger(LOG_SERVER, "no seeders found");
                     msg = create_message(P2P_ERR_NO_PEERS, NULL, 0);
                 } else {
-                    printf("[SERVER] found %d seeders\n", seeders.num_ports);
+                    logger(LOG_SERVER, "found %d seeders", seeders.num_ports);
                     msg = create_message(P2P_PEER_LIST, seeders.ports, seeders.num_ports * sizeof(int));
                 }
 
@@ -136,9 +137,9 @@ void* communicate_with_client(void* arg) {
                 break;
             
             case P2P_BYE:
+            default:
                 run = 0;
                 break;
-
         }
     } while (run);
 
@@ -157,7 +158,7 @@ int main() {
         .sin_addr.s_addr = htonl(INADDR_ANY)
     };
 
-    printf("[SERVER] starting server...\n");
+    logger(LOG_SERVER, "starting server...");
 
     // Server socket setup
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
@@ -175,7 +176,7 @@ int main() {
         exit(1);
     }
 
-    printf("[SERVER] server started: %s", print_sockaddr(server_sockaddr));
+    logger(LOG_SERVER, "server started: %s", print_sockaddr(server_sockaddr));
 
     // Concurrent server connection handling
     pthread_t tid[MAX_CLIENTS];

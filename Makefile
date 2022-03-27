@@ -1,8 +1,11 @@
+C_FLAGS = -Wall -pthread
+LIBS = lib/protocol.c lib/netio.c lib/logger.c
+
 server:
-	gcc -Wall -pthread -o bin/server.exe src/server.c  lib/protocol.c lib/netio.c
+	gcc $(C_FLAGS) -o bin/server.exe src/server.c $(LIBS)
 
 test:
-	gcc -Wall -o bin/test.exe src/test.c  lib/protocol.c lib/netio.c
+	gcc $(C_FLAGS) -o bin/test.exe src/test.c $(LIBS)
 	
 peer:
-	gcc -Wall -pthread -o bin/peer.exe src/peer.c  lib/protocol.c lib/netio.c
+	gcc $(C_FLAGS) -o bin/peer.exe src/peer.c $(LIBS)

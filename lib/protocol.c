@@ -1,6 +1,6 @@
 #include "protocol.h"
 
-#define PRINT_FLAG 0
+#define PRINT_FLAG 1
 
 message_t create_message(int code, void *body, int body_size) {
     message_t msg;
@@ -33,4 +33,11 @@ void print_message(message_t msg) {
     } else {
         printf("[PROTOCOL]\ncode: %s\nbody_size: %d\nbody: %.*s...\n", message_code[msg.code], msg.body_size, 20, body);
     }
+}
+
+char *msg_to_string(message_t msg) {
+    char* str = malloc(30);
+    sprintf(str, "%s - size: %d", message_code[msg.code], msg.body_size);
+
+    return str;
 }

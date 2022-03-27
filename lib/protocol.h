@@ -24,4 +24,6 @@ message_t create_message(int code, void *body, int body_size);
 
 void print_message(message_t msg);
 
+char *msg_to_string(message_t msg);
+
 #endif

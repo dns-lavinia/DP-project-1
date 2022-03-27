@@ -23,7 +23,7 @@ void set_addr(struct sockaddr_in *addr, uint32_t inaddr, short sin_port) {
 
 char* print_sockaddr(struct sockaddr_in addr) {
     char* str = malloc(sizeof(char) * 30);
-    sprintf(str, "%s:%d\n", inet_ntoa(addr.sin_addr), ntohs(addr.sin_port));
+    sprintf(str, "%s:%d", inet_ntoa(addr.sin_addr), ntohs(addr.sin_port));
     return str;
 }
 

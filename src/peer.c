@@ -1,19 +1,22 @@
+#define _XOPEN_SOURCE 500
 #include <arpa/inet.h>  // for inet_addr
 #include <dirent.h>     // for opendir, closedir
 #include <errno.h>
 #include <fcntl.h>       //for open file modes.
+#include <ftw.h>         // for nftw
 #include <netinet/in.h>  // for sockaddr_in struct
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>  // for memset
 #include <sys/socket.h>
+#include <sys/stat.h>  // for fstat
 #include <sys/types.h>
 #include <unistd.h>  // for close
-#include <sys/stat.h> // for fstat
 
 #include "../lib/netio.h"
 #include "../lib/protocol.h"
+#include "../lib/logger.h"
 
 //==============================================================================
 //================ Some general info that we can delete later ==================
@@ -35,17 +38,15 @@
 //==============================================================================
 
 #define MAX_PEERS 10
-#define SRV_PORT 5005
+#define SRV_PORT 5006
 #define BUF_LEN 1024
 
-
-// thread shared data 
+// thread shared data
 typedef struct {
     int port;
 } thread_data_t;
 
 thread_data_t thread_data;
-
 
 /* SEEDER CODE */
 
@@ -58,13 +59,13 @@ void upload_file_segment(int leecher_fd, char *file_name, int total_seg, int cur
         perror("OPEN ERROR");
         exit(1);
     }
-    
+
     struct stat st;
     fstat(fd, &st);
 
     // total bytes to read
     int total_to_read = st.st_size;
-    int seg_size = total_to_read / total_seg; // size of one segment to send
+    int seg_size = total_to_read / total_seg;  // size of one segment to send
     int n_read = seg_size;
     int offset = current_seg * seg_size;
 
@@ -78,23 +79,33 @@ void upload_file_segment(int leecher_fd, char *file_name, int total_seg, int cur
     message_t msg;
     while ((bytes_read = stream_read(fd, buffer, n_read, offset)) > 0) {
         msg = create_message(P2P_FILE_DATA, buffer, bytes_read);
-        write(leecher_fd, &msg, sizeof(msg));
+        if (write(leecher_fd, &msg, sizeof(msg)) < 0) {
+            perror("WRITE ERROR");
+            exit(1);
+        }
 
         // keep track and update how much of the segment was read
         seg_size -= n_read;
 
-        if(n_read > seg_size) {
+        if (n_read > seg_size) {
             n_read = seg_size;
         }
 
         offset += bytes_read;
 
-        if(offset == ((current_seg * seg_size) + 1)) {
+        if (offset == ((current_seg * seg_size) + 1)) {
             break;
         }
     }
 
     close(fd);
+
+    // end file upload
+    msg = create_message(P2P_BYE, NULL, 0);
+    if (write(leecher_fd, &msg, sizeof(msg)) < 0) {
+        perror("WRITE ERROR");
+        exit(1);
+    }
 }
 
 void *handle_leecher_communication(void *arg) {
@@ -110,24 +121,24 @@ void *handle_leecher_communication(void *arg) {
             exit(1);
         }
 
-        print_message(msg);
+        logger(LOG_PROTOCOL, msg_to_string(msg));
 
         // process message
         switch (msg.code) {
             case P2P_FILE_REQUEST:
-                printf("[SEEDER] sending file: %s\n", msg.body);
+                logger(LOG_SEEDER, "sending file: %s", msg.body);
 
-                file_name = (char*)malloc(msg.body_size);
+                file_name = (char *)malloc(msg.body_size);
                 memcpy(file_name, msg.body, msg.body_size);
                 break;
 
             case P2P_SEGMENT_REQUEST:
-                if(NULL == file_name) {
-                    fprintf(stderr, "[SEEDER] File name not specified for segment transfer.\n");
+                if (NULL == file_name) {
+                    fprintf(stderr, "[SEEDER] File name not specified for segment transfer.");
                     exit(1);
                 }
 
-                printf("[SEEDER] sending requested segment: %d\n", *((int *)msg.body + 1));
+                logger(LOG_SEEDER, "sending requested segment: %d", *((int *)msg.body + 1));
 
                 int total_seg = *((int *)msg.body);
                 int current_seg = *((int *)msg.body + 1);
@@ -139,7 +150,7 @@ void *handle_leecher_communication(void *arg) {
                 break;
 
             default:
-                fprintf(stderr, "Unknown command\n");
+                fprintf(stderr, "Unknown command");
                 exit(1);
         }
     } while (run);
@@ -147,7 +158,7 @@ void *handle_leecher_communication(void *arg) {
     free(file_name);
     close(fd);
 
-    printf("[SEEDER] connection closed\n");
+    logger(LOG_SEEDER, "connection closed");
 
     return NULL;
 }
@@ -161,7 +172,7 @@ void *act_as_seeder(void *args) {
     };
     socklen_t seeder_addr_len = sizeof(struct sockaddr_in);
 
-    printf("[SEEDER] starting seeder server...\n");
+    logger(LOG_SEEDER, "starting seeder server...");
 
     // seeder socket setup
     if ((seeder_fd = socket(PF_INET, SOCK_STREAM, 0)) < 0) {
@@ -186,7 +197,7 @@ void *act_as_seeder(void *args) {
         exit(1);
     }
 
-    printf("[SEEDER] seeder started: %s\n", print_sockaddr(seeder_addr));
+    logger(LOG_SEEDER, "seeder started: %s", print_sockaddr(seeder_addr));
 
     // accept connection
     pthread_t tid[MAX_PEERS];
@@ -203,7 +214,7 @@ void *act_as_seeder(void *args) {
             continue;
         }
 
-        printf("[SEEDER] leecher connected: %s - %d\n", print_sockaddr(client_sockaddr), leecher_fd);
+        logger(LOG_SEEDER, "leecher connected: %s - %d", print_sockaddr(client_sockaddr), leecher_fd);
 
         // create a new thread to handle the leecher
         if (pthread_create(&tid[i], NULL, &handle_leecher_communication, (void *)&leecher_fd) != 0) {
@@ -217,7 +228,6 @@ void *act_as_seeder(void *args) {
 
     return NULL;
 }
-
 
 /* LEECHER CODE */
 
@@ -235,19 +245,25 @@ void download_file_segment(int leecher_fd, char *file_name, int current_seg) {
     message_t msg;
 
     while (read(leecher_fd, &msg, sizeof(msg)) > 0) {
-        print_message(msg);
+        logger(LOG_PROTOCOL, msg_to_string(msg));
 
-        if (msg.code == P2P_FILE_DATA) {
-            stream_write(fd, msg.body, msg.body_size);
-        } else {
-            break;
-        }
-        if (msg.body_size < BUF_LEN - 20) {
-            break;
+        switch (msg.code) {
+            case P2P_FILE_DATA:
+                if (write(fd, msg.body, msg.body_size) < 0) {
+                    perror("WRITE ERROR");
+                    exit(1);
+                }
+                break;
+
+            case P2P_BYE:
+                close(fd);
+                return;
+
+            default:
+                fprintf(stderr, "Unknown command");
+                exit(1);
         }
     }
-
-    close(fd);
 }
 
 typedef struct {
@@ -255,18 +271,17 @@ typedef struct {
     char *file_name;
     int total_seeders;
     int current_seg;
-} thread_seeder_args;
+} handle_seeder_communication_args;
 
-void* handle_seeder_communication(void *arg) {
-    thread_seeder_args* args = (thread_seeder_args*) arg;
+void *handle_seeder_communication(void *arg) {
+    handle_seeder_communication_args *args = (handle_seeder_communication_args *)arg;
 
     // connect to seeder
     int leecher_fd;
     struct sockaddr_in leecher_addr = {
         .sin_family = AF_INET,
         .sin_port = htons(args->port),
-        .sin_addr.s_addr = inet_addr("127.0.0.1")
-    };
+        .sin_addr.s_addr = inet_addr("127.0.0.1")};
 
     if ((leecher_fd = socket(PF_INET, SOCK_STREAM, 0)) < 0) {
         perror("SOCKET ERROR");
@@ -278,7 +293,7 @@ void* handle_seeder_communication(void *arg) {
         exit(1);
     }
 
-    printf("[LEECHER] connected to seeder: %s\n", print_sockaddr(leecher_addr));
+    logger(LOG_LEECHER, "connected to seeder: %s", print_sockaddr(leecher_addr));
 
     // send the name of the file you request as leecher
     message_t req_msg = create_message(P2P_FILE_REQUEST, args->file_name, strlen(args->file_name) + 1);
@@ -298,11 +313,11 @@ void* handle_seeder_communication(void *arg) {
         perror("WRITE ERROR");
         exit(1);
     }
-    
+
     // download the segment
-    printf("[LEECHER] downloading file: %s\n", args->file_name);
+    logger(LOG_LEECHER, "downloading file segment: %d / %d (%s)", args->current_seg + 1, args->total_seeders, args->file_name);
     download_file_segment(leecher_fd, args->file_name, args->current_seg);
-    printf("[LEECHER] file download complete\n");
+    logger(LOG_LEECHER, "file segment download complete: %d / %d (%s)", args->current_seg + 1, args->total_seeders, args->file_name);
 
     // send bye message
     message_t bye_msg = create_message(P2P_BYE, NULL, 0);
@@ -347,7 +362,7 @@ void recreate_file(char *file_name, int total_segments) {
         while ((bytes_read = read(fd_temp, buffer, BUF_LEN)) > 0) {
             // write to final file
             if (write(fd, buffer, bytes_read) < 0) {
-                fprintf(stderr, "Could not write to file.\n");
+                perror("WRITE ERROR");
                 exit(1);
             }
         }
@@ -369,26 +384,41 @@ void recreate_file(char *file_name, int total_segments) {
     }
 }
 
+int remove_temp_files(const char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf) {
+    int rv = remove(fpath);
+
+    if (rv)
+        perror(fpath);
+
+    return rv;
+}
+
+int remove_temp(char *path) {
+    return nftw(path, remove_temp_files, 64, FTW_DEPTH | FTW_PHYS);
+}
+
 void act_as_leecher(char *file_name, int *seeder_ports, int total_seeders) {
+    // create temp directory
+    mkdir("./files/temp", 0755);
+
     // create a thread for each peer that has the file
     pthread_t thread_id[total_seeders];
-    thread_seeder_args thread_args[total_seeders];
-    for(int i = 0; i < total_seeders; i++) {
-        thread_args[i] = (thread_seeder_args) {
+    handle_seeder_communication_args act_as_client_args[total_seeders];
+    for (int i = 0; i < total_seeders; i++) {
+        act_as_client_args[i] = (handle_seeder_communication_args){
             .port = seeder_ports[i],
             .file_name = file_name,
             .total_seeders = total_seeders,
-            .current_seg = i
-        };
+            .current_seg = i};
 
-        if (pthread_create(&thread_id[i], NULL, handle_seeder_communication, &thread_args[i]) != 0) {
+        if (pthread_create(&thread_id[i], NULL, handle_seeder_communication, &act_as_client_args[i]) != 0) {
             perror("THREAD CREATION ERROR");
             exit(1);
         }
     }
 
     // join all threads
-    for(int i = 0; i < total_seeders; i++) {
+    for (int i = 0; i < total_seeders; i++) {
         if (pthread_join(thread_id[i], NULL) != 0) {
             perror("THREAD JOIN ERROR");
             exit(1);
@@ -396,8 +426,13 @@ void act_as_leecher(char *file_name, int *seeder_ports, int total_seeders) {
     }
 
     recreate_file(file_name, total_seeders);
-}
 
+    // remove temp directory
+    if (remove_temp("./files/temp") < 0) {
+        perror("REMOVE TEMP ERROR");
+        exit(1);
+    }
+}
 
 /* CLIENT CODE */
 
@@ -411,7 +446,7 @@ int has_file(char *file) {
         return 0;
     }
 
-    if(close(fd) < 0) {
+    if (close(fd) < 0) {
         perror("CLOSE ERROR");
         exit(1);
     }
@@ -422,10 +457,10 @@ int has_file(char *file) {
 typedef struct {
     char *file_name;
     int fd;
-} thread_args;
+} act_as_client_args;
 
 void *act_as_client(void *arg) {
-    thread_args args = *(thread_args *)arg;
+    act_as_client_args args = *(act_as_client_args *)arg;
     char *file_name = args.file_name;
     int fd = args.fd;
 
@@ -438,14 +473,14 @@ void *act_as_client(void *arg) {
             exit(1);
         }
 
-        print_message(res_msg);
+        logger(LOG_PROTOCOL, msg_to_string(res_msg));
 
         switch (res_msg.code) {
             case P2P_FILE_REQUEST:
-                printf("[CLIENT] file requested: %s\n", res_msg.body);
+                logger(LOG_CLIENT, "file requested: %s", res_msg.body);
 
                 if (has_file(res_msg.body)) {
-                    printf("[CLIENT] file found\n");
+                    logger(LOG_CLIENT, "file found");
 
                     req_msg = create_message(P2P_FILE_FOUND, &thread_data.port, 4);
                     if (write(fd, &req_msg, sizeof(message_t)) < 0) {
@@ -453,7 +488,7 @@ void *act_as_client(void *arg) {
                         exit(1);
                     }
                 } else {
-                    printf("[CLIENT] file not found\n");
+                    logger(LOG_CLIENT, "file not found");
 
                     req_msg = create_message(P2P_FILE_NOT_FOUND, NULL, 0);
                     if (write(fd, &req_msg, sizeof(message_t)) < 0) {
@@ -464,32 +499,31 @@ void *act_as_client(void *arg) {
                 break;
 
             case P2P_ERR_NO_PEERS:
-                printf("No peers available at the moment! Try again later!\n");
+                logger(LOG_CLIENT, "No peers available at the moment! Try again later!");
                 break;
 
             case P2P_PEER_LIST:
-                printf("[CLIENT] Peer list received: \n");
+                logger(LOG_CLIENT, "Peer list received: ");
                 int seeder_number = res_msg.body_size / sizeof(int);
 
                 // print the ports of the peers that have the requested file
-                for(int i = 0; i < seeder_number; i++) {
-                    printf("\t[%d] - %d\n", i, *((int*)res_msg.body + i));
+                for (int i = 0; i < seeder_number; i++) {
+                    printf("\t[%d] - %d\n", i, *((int *)res_msg.body + i));
                 }
 
-                int* seeder_ports = (int*)res_msg.body;
+                int *seeder_ports = (int *)res_msg.body;
                 act_as_leecher(file_name, seeder_ports, seeder_number);
 
                 break;
 
             default:
-                fprintf(stderr, "Unknown command\n");
+                fprintf(stderr, "Unknown command");
                 exit(1);
         }
     }
 
     return NULL;
 }
-
 
 int connect_to_server(int peer_address) {
     int leecher_fd;
@@ -523,7 +557,6 @@ void find_file_for_client(char *file_name, int fd) {
     }
 }
 
-
 int main(int argc, char **argv) {
     int leecher_fd;
     uint32_t peer_address = 2130706433;
@@ -543,7 +576,7 @@ int main(int argc, char **argv) {
     }
 
     // process for client to server
-    thread_args args = {
+    act_as_client_args args = {
         .file_name = argv[1],
         .fd = leecher_fd};
 
