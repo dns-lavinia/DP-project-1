@@ -1,7 +1,0 @@
-{
-    "files.associations": {
-        "*.pyde": "python",
-        "*.css": "css",
-        "netio.h": "c"
-    }
-}
